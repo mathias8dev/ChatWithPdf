@@ -30,9 +30,9 @@ def process_text(text):
     
     # Convert the chunks of text into embeddings to form a knowledge base
     embeddings = OpenAIEmbeddings()
-    knowledgeBase = FAISS.from_texts(chunks, embeddings)
+    knowledge_base = FAISS.from_texts(chunks, embeddings)
     
-    return knowledgeBase
+    return knowledge_base
 
 
 def getRealExtension(file):
@@ -54,7 +54,7 @@ def make_dirs(path):
     if (not os.path.exists(path)):
         os.makedirs(path)
 
-def getAndSaveKnowledgeBaseFrom(savedPath, application_id):
+def saveKnowledgeBaseFrom(savedPath, application_id):
     pdf_reader = PdfReader(savedPath)
     # Text variable will store the pdf text
     text = ""
@@ -69,6 +69,20 @@ def getAndSaveKnowledgeBaseFrom(savedPath, application_id):
     make_dirs(base_path)
     with open(object_path, "wb") as file:
         pickle.dump(knowledgeBase, file)
+
+
+def getKnowledgeBaseFrom(application_id):
+    base_path = os.path.join(os.environ.get("SERIALIZED_OBJECT_FOLDER"), application_id)
+    files = os.listdir(base_path)
+    for index, file in enumerate(files):
+        with open(os.path.join(base_path, file), "rb") as object_file:
+            if (index == 0):
+                knowledge_base = pickle.load(object_file)   
+            else:
+                current_base = pickle.load(object_file)
+                knowledge_base.merge_from(current_base)
+    print("The knowledge base is ", knowledge_base)
+    return knowledge_base
 
 
 app = Flask(__name__)
@@ -93,21 +107,35 @@ def uploadFile(app_id):
         file_path = os.path.join(saved_path,  f"{knowledge_key}.pdf")
         make_dirs(saved_path)
         file.save(file_path)
-        getAndSaveKnowledgeBaseFrom(file_path, app_id)
+        saveKnowledgeBaseFrom(file_path, app_id)
         os.remove(file_path)
         return f"File uploaded: {file_path}"
 
 
 @app.route('/answer/<app_id>', methods=['POST'])
 def answerMyQuestion(app_id):
+    
+    # Check that a the current app_id has a knowledge base registered
+    base_path = os.path.join(os.environ.get("SERIALIZED_OBJECT_FOLDER"), app_id)
+    if (not os.path.exists):
+        # throw error
+        pass
+    
+    # Check that the question is passed as argument
     request_data = request.get_json()
     question = request_data["question"]
     if (question == None):
         return
-    # Check that a the current app_id has a knowledge base registered
-    # If not, throw error
-    # Else, check that the question is passed as argument
     # If it is, get completion using openapi api
+    knowledge_base = getKnowledgeBaseFrom(app_id)
+    docs = knowledge_base.similarity_search(question)
+    llm = OpenAI()
+    chain = load_qa_chain(llm, chain_type='stuff')
+    
+    with get_openai_callback() as cost:
+        response = chain.run(input_documents=docs, question=question)
+        print(cost)
+    return response
     #return the response
     
 
