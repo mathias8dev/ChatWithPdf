@@ -1,4 +1,7 @@
-from flask import request, Flask
+from http.client import HTTPException
+import sys
+from flask import json, request, Flask
+from openai import APIError, OpenAIError
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 import os
@@ -14,9 +17,12 @@ import uuid
 import mimetypes
 import pickle
 
+from ApiResponse import ApiResponse
+
 
 # Load environment variables
 load_dotenv()
+
 
 def process_text(text):
     # Split the text into chunks using langchain
@@ -27,11 +33,11 @@ def process_text(text):
         length_function=len
     )
     chunks = text_splitter.split_text(text)
-    
+
     # Convert the chunks of text into embeddings to form a knowledge base
     embeddings = OpenAIEmbeddings()
     knowledge_base = FAISS.from_texts(chunks, embeddings)
-    
+
     return knowledge_base
 
 
@@ -50,9 +56,11 @@ def getRealExtension(file):
         return mime_extension
     return extension
 
+
 def make_dirs(path):
     if (not os.path.exists(path)):
         os.makedirs(path)
+
 
 def saveKnowledgeBaseFrom(savedPath, application_id):
     pdf_reader = PdfReader(savedPath)
@@ -60,11 +68,12 @@ def saveKnowledgeBaseFrom(savedPath, application_id):
     text = ""
     for page in pdf_reader.pages:
         text += page.extract_text()
-    
+
     # Create the knowledge base object
     knowledgeBase = process_text(text)
     knowledge_key = str(uuid.uuid4())
-    base_path = os.path.join(os.environ.get("SERIALIZED_OBJECT_FOLDER"), application_id)
+    base_path = os.path.join(os.environ.get(
+        "SERIALIZED_OBJECT_FOLDER"), application_id)
     object_path = os.path.join(base_path, f"{knowledge_key}")
     make_dirs(base_path)
     with open(object_path, "wb") as file:
@@ -72,12 +81,13 @@ def saveKnowledgeBaseFrom(savedPath, application_id):
 
 
 def getKnowledgeBaseFrom(application_id):
-    base_path = os.path.join(os.environ.get("SERIALIZED_OBJECT_FOLDER"), application_id)
+    base_path = os.path.join(os.environ.get(
+        "SERIALIZED_OBJECT_FOLDER"), application_id)
     files = os.listdir(base_path)
     for index, file in enumerate(files):
         with open(os.path.join(base_path, file), "rb") as object_file:
             if (index == 0):
-                knowledge_base = pickle.load(object_file)   
+                knowledge_base = pickle.load(object_file)
             else:
                 current_base = pickle.load(object_file)
                 knowledge_base.merge_from(current_base)
@@ -91,6 +101,7 @@ app = Flask(__name__)
 @app.route('/')
 def home():
     return "Hello world"
+
 
 @app.route('/upload/<app_id>', methods=['POST'])
 def uploadFile(app_id):
@@ -114,30 +125,92 @@ def uploadFile(app_id):
 
 @app.route('/answer/<app_id>', methods=['POST'])
 def answerMyQuestion(app_id):
-    
+
     # Check that a the current app_id has a knowledge base registered
-    base_path = os.path.join(os.environ.get("SERIALIZED_OBJECT_FOLDER"), app_id)
+    base_path = os.path.join(
+        os.environ.get("SERIALIZED_OBJECT_FOLDER"),
+        app_id
+    )
     if (not os.path.exists):
-        # throw error
-        pass
-    
+        return ApiResponse.badRequest(
+            app = app,
+            content = {
+                "app_id": f"AppId: {app_id} invalid or the current app does not upload any valid documents"
+            }
+        )
+
     # Check that the question is passed as argument
     request_data = request.get_json()
-    question = request_data["question"]
-    if (question == None):
-        return
+    try :
+        question = request_data["question"]
+    except :
+        return ApiResponse.badRequest(
+            app = app,
+            content = {
+                "question": "No question json attribute passed"
+            }
+        )
+    
+    if (question is None or not bool(question.strip())):
+        return ApiResponse.badRequest(
+            app = app,
+            content = {
+                "question": "The question is empty, blank or null"
+            }
+        )
     # If it is, get completion using openapi api
     knowledge_base = getKnowledgeBaseFrom(app_id)
     docs = knowledge_base.similarity_search(question)
     llm = OpenAI()
     chain = load_qa_chain(llm, chain_type='stuff')
-    
+
     with get_openai_callback() as cost:
         response = chain.run(input_documents=docs, question=question)
         print(cost)
+    # return the response
     return response
-    #return the response
     
 
+
+@app.errorhandler(404)
+def pageNotFound(error):
+    return ApiResponse.genericError(
+        app = app,
+        content = {
+            "message": "Url invalid",
+            "error": error.description
+        },
+        code = 404
+    )
+
+
+@app.errorhandler(400)
+def badRequest(error):
+    return ApiResponse.badRequest(
+        app = app,
+        content = error.descripton,
+    )
+
+
+@app.errorhandler(500)
+def internalServerError(error):
+    _, exc_value, _ = sys.exc_info()
+    
+    # if (isinstance(exc_value, OpenAIError)) :
+    #     print("Open AI error")
+    #     print(exc_value.json_body or exc_value._message)
+    return ApiResponse.genericError(
+        app = app,
+        content = {
+            "message": "Internal server error",
+            "error": error.description
+        },
+        code = 500
+    )
+
+
+
+
+
 if __name__ == '__main__':
-    app.run(debug = True)
+    app.run(debug=True)
