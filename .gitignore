@@ -1,6 +1,10 @@
 .env
+.env.local
+.env.prod
+apiKey*
 /env
 /__pycache__
 /storage
 *.pdf
 settings.json
+config.py

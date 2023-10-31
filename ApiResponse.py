@@ -8,8 +8,10 @@ class ApiResponse:
         return app.response_class(
             response=json.dumps({
                 "code": 200,
-                "message": "Request processed successfully",
-                "content": content
+                "description": {
+                    "message": "Request processed successfully",
+                    "content": content
+                }
             }),
             status=200,
             mimetype="application/json"
@@ -30,7 +32,7 @@ class ApiResponse:
         )
 
     @staticmethod
-    def genericError(app, code, content):
+    def genericResponse(app, code, content):
         return app.response_class(
             response=json.dumps({
                 "code": code,
