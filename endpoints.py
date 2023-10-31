@@ -26,6 +26,7 @@ from PyPDF2 import PdfReader
 from ApiResponse import ApiResponse
 from ApiResponse import ApiResponse
 from models import DeviceModel
+from utils import is_access_token_valid
 
 
 
@@ -67,6 +68,34 @@ def appIdRequired(func):
                 app=app,
                 content={
                     "message": "Please provide a valid app_id"
+                },
+                code=403
+            )
+    return decorator
+
+
+def accessTokenRequired(func):
+    @functools.wraps(func)
+    def decorator(*args, **kwargs):
+        try:
+            token = request.headers.get("authorization").split(" ")[1].strip()
+        except:
+            return ApiResponse.genericResponse(
+                app=app,
+                content={
+                    "message": "Access token should be provided as Bearer"
+                },
+                code = 401
+            )
+
+        # Check if the access_token is correct and valid
+        if (is_access_token_valid(token)):
+            return func(*args, **kwargs)
+        else:
+            return ApiResponse.genericResponse(
+                app=app,
+                content={
+                    "message": f"The provided token: {token} is invalid"
                 },
                 code=403
             )
@@ -174,8 +203,9 @@ def uploadFile():
         )
 
 
-@appIdRequired
+
 @app.route('/knowledge/test', methods=['POST'])
+@appIdRequired
 def answerMyQuestion():
     request_data = request.get_json()
     app_id = request_data["app_id"]
@@ -225,6 +255,7 @@ def answerMyQuestion():
 
 
 @app.route('/register/device/', methods=['POST'])
+@accessTokenRequired
 def registerDevice():
 
     if request.is_json:
